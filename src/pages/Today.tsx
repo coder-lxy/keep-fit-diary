@@ -167,7 +167,7 @@ export default function Today() {
             </div>
             {SLOTS.map((slot) => <MealRow key={slot} slot={slot} />)}
             {/* 没填 API Key 时不显示 AI 入口 */}
-            {getApiKey() && <button className="block ghost" style={{ marginTop: 10 }} onClick={() => nav('/ask')}>问问 AI：今天还能吃什么</button>}
+            {getApiKey() && <button className="block ghost" style={{ marginTop: 10 }} onClick={() => nav('/ask')}>问问 AI：还能吃什么 / 帮我记一餐</button>}
           </div>
 
           {/* 运动 */}

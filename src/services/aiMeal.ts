@@ -190,8 +190,8 @@ export interface MatchResult {
   unmatched: string[];
 }
 
-/** 单条数量超过默认份量的这么多倍，视为识别错误 */
-const MAX_AMOUNT_MULTIPLE = 10;
+/** 单条数量超过默认份量的这么多倍，视为识别错误。第 3 级的 log_meal 也用这条规则 */
+export const MAX_AMOUNT_MULTIPLE = 10;
 
 export function matchParsed(parsed: ParsedFood[], foodsById: Map<number, FoodItem>): MatchResult {
   const items: FoodPortion[] = [];

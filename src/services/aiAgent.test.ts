@@ -2,7 +2,7 @@
 // 假模型按脚本依次返回回复，同时记录每次收到的 messages，这样能检查循环有没有把对话拼对。
 import { describe, expect, it } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
-import { runAgent, toolDefinition, type AgentTool, type RequestFn } from './aiAgent';
+import { DENIED_RESULT, runAgent, toolDefinition, type AgentTool, type ConfirmRequest, type RequestFn } from './aiAgent';
 
 type Block = Anthropic.Beta.BetaContentBlock;
 
@@ -125,5 +125,90 @@ describe('runAgent', () => {
     const cut = fakeModel([reply([toolUse('x', 'boom', {})], 'max_tokens')]);
     await expect(runAgent({ system: 's', userText: 'q', tools: [boom], request: cut.request, onStep: (s) => steps.push(s) })).rejects.toThrow('截断');
     expect(steps).toEqual([]);
+  });
+});
+
+// ---------- 第 3 级：写操作要先经用户确认 ----------
+
+/** 一个带确认的写工具：记下 run 有没有被调用过 */
+function writeTool() {
+  const writes: string[] = [];
+  const tool: AgentTool = {
+    name: 'write',
+    description: '写入 text',
+    input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    confirm: (input) => {
+      if (typeof input.text !== 'string') throw new Error('text 要是字符串');
+      return `将写入：${input.text}`;
+    },
+    run: (input) => { writes.push(String(input.text)); return `已写入：${String(input.text)}`; },
+  };
+  return { tool, writes };
+}
+
+describe('runAgent 的写操作确认', () => {
+  it('用户同意：先问再执行，确认框里是工具生成的说明', async () => {
+    const { tool, writes } = writeTool();
+    const { request, seen } = fakeModel([
+      reply([toolUse('w1', 'write', { text: 'hi' })], 'tool_use'),
+      reply([text('记好了')], 'end_turn'),
+    ]);
+    const asked: ConfirmRequest[] = [];
+    const r = await runAgent({ system: 's', userText: 'q', tools: [tool], request, confirm: async (req) => { asked.push(req); return true; } });
+    expect(asked).toEqual([{ tool: 'write', input: { text: 'hi' }, preview: '将写入：hi' }]);
+    expect(writes).toEqual(['hi']);
+    expect(r.steps).toEqual([{ tool: 'write', input: { text: 'hi' }, result: '已写入：hi', isError: false }]);
+    expect(seen[1].messages[2]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'w1', content: '已写入：hi' }] });
+  });
+
+  it('用户拒绝：不执行，把「用户没同意」当作正常结果（不是 is_error）发回模型', async () => {
+    const { tool, writes } = writeTool();
+    const { request, seen } = fakeModel([
+      reply([toolUse('w1', 'write', { text: 'hi' })], 'tool_use'),
+      reply([text('那就不记了')], 'end_turn'),
+    ]);
+    const r = await runAgent({ system: 's', userText: 'q', tools: [tool], request, confirm: () => false });
+    expect(writes).toEqual([]);
+    expect(r.text).toBe('那就不记了');
+    expect(r.steps).toEqual([{ tool: 'write', input: { text: 'hi' }, result: DENIED_RESULT, isError: false, denied: true }]);
+    const result = (seen[1].messages[2].content as Anthropic.Beta.BetaToolResultBlockParam[])[0];
+    expect(result.content).toBe(DENIED_RESULT);
+    expect(result).not.toHaveProperty('is_error');
+  });
+
+  it('没有传 confirm：一律当作拒绝，绝不在没人把关时写入', async () => {
+    const { tool, writes } = writeTool();
+    const { request } = fakeModel([
+      reply([toolUse('w1', 'write', { text: 'hi' })], 'tool_use'),
+      reply([text('好')], 'end_turn'),
+    ]);
+    const r = await runAgent({ system: 's', userText: 'q', tools: [tool], request });
+    expect(writes).toEqual([]);
+    expect(r.steps[0].denied).toBe(true);
+  });
+
+  it('参数不合法：confirm 阶段就报错回传模型，不弹确认框', async () => {
+    const { tool, writes } = writeTool();
+    const { request } = fakeModel([
+      reply([toolUse('w1', 'write', { text: 123 })], 'tool_use'),
+      reply([text('改一下')], 'end_turn'),
+    ]);
+    let asked = 0;
+    const r = await runAgent({ system: 's', userText: 'q', tools: [tool], request, confirm: () => { asked++; return true; } });
+    expect(asked).toBe(0);
+    expect(writes).toEqual([]);
+    expect(r.steps[0]).toEqual({ tool: 'write', input: { text: 123 }, result: 'text 要是字符串', isError: true });
+  });
+
+  it('只读工具不问：同一轮里读和写混在一起，只有写的那个弹确认', async () => {
+    const { tool } = writeTool();
+    const { request } = fakeModel([
+      reply([toolUse('a', 'echo', { text: '1' }), toolUse('b', 'write', { text: '2' })], 'tool_use'),
+      reply([text('好')], 'end_turn'),
+    ]);
+    const asked: string[] = [];
+    const r = await runAgent({ system: 's', userText: 'q', tools: [echo, tool], request, confirm: (req) => { asked.push(req.tool); return true; } });
+    expect(asked).toEqual(['write']);
+    expect(r.steps.map((s) => s.result)).toEqual(['echo:1', '已写入：2']);
   });
 });

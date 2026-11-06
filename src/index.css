@@ -242,3 +242,4 @@ label { display: block; font-size: 14px; color: var(--muted); margin: 10px 0 4px
 .agent-steps code { font-size: 13px; }
 .agent-steps pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.5; background: var(--bg); border-radius: 8px; padding: 8px 10px; margin: 4px 0 0; }
 .answer { white-space: pre-wrap; line-height: 1.65; margin: 0; }
+.confirm-preview { white-space: pre-wrap; word-break: break-all; font: inherit; line-height: 1.6; background: var(--bg); border-radius: 10px; padding: 10px 12px; margin: 12px 0; }

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { addDays, nowIso, today } from '../domain/dates';
 import { db, ensureSeeded, exportAll, importAll, importPresetFoods } from '../domain/db';
-import { generatePlanForDate, logMealAsPlanned } from './planService';
+import { generatePlanForDate, logMealAsPlanned, saveMealLog } from './planService';
 import { setIngredientInStock } from './ingredients';
 import { streak, summarizeRange } from './stats';
 
@@ -92,6 +92,20 @@ describe('planService 端到端', () => {
     const log = await db.mealLogs.where('[date+slot]').equals([T, 'breakfast']).first();
     expect(log?.status).toBe('planned');
     expect(log?.items.length).toBeGreaterThan(0);
+  });
+
+  it('saveMealLog：同一天同一餐只保留一条，覆盖时沿用原 id，并记食物使用次数', async () => {
+    const apple = (await db.foods.where('name').equals('苹果').first())!;
+    const before = apple.useCount;
+    await saveMealLog({ date: T, slot: 'snack', items: [{ foodId: apple.id!, amount: 200 }], status: 'extra', loggedAt: nowIso() });
+    const first = (await db.mealLogs.where('[date+slot]').equals([T, 'snack']).first())!;
+    // 不带 id 再存一次：应覆盖而不是新增
+    await saveMealLog({ date: T, slot: 'snack', items: [{ foodId: apple.id!, amount: 100 }], status: 'extra', loggedAt: nowIso() });
+    const logsOfSlot = await db.mealLogs.where('[date+slot]').equals([T, 'snack']).toArray();
+    expect(logsOfSlot).toHaveLength(1);
+    expect(logsOfSlot[0].id).toBe(first.id);
+    expect(logsOfSlot[0].items).toEqual([{ foodId: apple.id!, amount: 100 }]);
+    expect((await db.foods.get(apple.id!))!.useCount).toBe(before + 2);
   });
 
   it('没有现有食材时从食物库补，添加后只用现有食材，跨周仍生效且保留打卡', async () => {

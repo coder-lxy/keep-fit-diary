@@ -6,7 +6,7 @@ import { cardioKcal } from '../domain/rules/exercise';
 import { generateMealPlan, sumNutrition } from '../domain/rules/mealPlan';
 import { decideDayType } from '../domain/rules/schedule';
 import { analyzeTrend, isPeriodDay, movingAverage, type DailyPoint } from '../domain/rules/trend';
-import type { DailyPlan, DayType, FoodItem, MealSlot, PlannedMeal, WorkoutLog } from '../domain/types';
+import type { DailyPlan, DayType, FoodItem, MealLog, MealSlot, PlannedMeal, WorkoutLog } from '../domain/types';
 import { availableIngredients } from './ingredients';
 
 export interface GenerateOptions {
@@ -203,9 +203,17 @@ async function buildMeals(
 export async function logMealAsPlanned(plan: DailyPlan, slot: PlannedMeal['slot']): Promise<void> {
   const meal = plan.meals.find((m) => m.slot === slot);
   if (!meal) return;
-  const existing = await db.mealLogs.where('[date+slot]').equals([plan.date, slot]).first();
-  await db.mealLogs.put({ id: existing?.id, date: plan.date, slot, items: meal.items, status: 'planned', loggedAt: nowIso() });
-  await bumpUse(meal.items.map((i) => i.foodId));
+  await saveMealLog({ date: plan.date, slot, items: meal.items, status: 'planned', loggedAt: nowIso() });
+}
+
+/**
+ * 保存一餐的实际记录：同一天同一餐只有一条，已有就覆盖；并记一次食物使用。
+ * 第 3 级的 AI 写工具 log_meal 也走这里，AI 没有别的路能碰到数据库。
+ */
+export async function saveMealLog(log: MealLog): Promise<void> {
+  const existing = await db.mealLogs.where('[date+slot]').equals([log.date, log.slot]).first();
+  await db.mealLogs.put({ ...log, id: existing?.id ?? log.id });
+  await bumpUse(log.items.map((i) => i.foodId));
 }
 
 export async function bumpUse(foodIds: number[]): Promise<void> {
